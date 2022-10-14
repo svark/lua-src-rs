@@ -1218,6 +1218,7 @@ static BinOpr getbinopr (int op) {
     case TK_SHR: return OPR_SHR;
     case TK_CONCAT: return OPR_CONCAT;
     case TK_NE: return OPR_NE;
+    case TK_NE2: return OPR_NE;
     case TK_EQ: return OPR_EQ;
     case '<': return OPR_LT;
     case TK_LE: return OPR_LE;
@@ -1364,6 +1365,77 @@ static void check_conflict (LexState *ls, struct LHS_assign *lh, expdesc *v) {
   }
 }
 
+
+static void unfreereg (FuncState *fs, int reg) {
+  /* Needs to match freereg() in lcode.c */
+  if (reg >= luaY_nvarstack(fs)) {
+    fs->freereg++;
+  }
+}
+
+
+static void append_assignment (LexState *ls, struct LHS_assign *lh) {
+  FuncState * fs=ls->fs;
+  TString *appendfunc_name;
+  expdesc appendfunc;
+  expdesc var;
+  expdesc value;
+  int base;
+
+  luaX_next(ls);
+
+  checknext(ls, '=');
+
+  /* Push tup_append_assignment onto the stack */
+  /* Note: copied from function call suffixedexp -> primaryexp -> singlevar */
+  appendfunc_name = luaS_new(ls->L, "tup_append_assignment");
+  singlevaraux(fs, appendfunc_name, &appendfunc, 1);
+  if (appendfunc.k == VVOID) {
+    /* If tup_append_assignment isn't global, then check _ENV/locals
+     * Note: reuse appendfunc to reference _ENV temporarily
+     */
+    expdesc key;
+    /* Locate _ENV and make it an upvalue if necessary */
+    singlevaraux(fs, ls->envn, &appendfunc, 1);
+    lua_assert(appendfunc.k == VLOCAL || appendfunc.k == VUPVAL);
+    codestring(&key, appendfunc_name);  /* Make func_name a constant */
+    luaK_indexed(fs, &appendfunc, &key);  /* env[varname] */
+  }
+  luaK_exp2nextreg(fs, &appendfunc);
+
+  /* Push assignment lhs as first function argument */
+  var = lh->v; /* exp2nextreg disables the expr somehow, so copy it first */
+  if (var.k == VINDEXI || var.k == VINDEXSTR) {
+      unfreereg(fs, var.u.ind.t);
+  }
+  if (var.k == VINDEXED) {
+    /* exp2nextreg if INDEXED will try to pop/reuse the source table and
+     * index stack positions.
+     * Increase freeregs to prevent that.
+     */
+    unfreereg(fs, var.u.ind.t);
+    unfreereg(fs, var.u.ind.idx);
+  }
+  luaK_exp2nextreg(fs, &var);
+
+  /* Push original rhs as second function argument */
+  expr(ls, &value);
+  luaK_exp2nextreg(fs, &value);
+
+  /* Call the function */
+  /* Note: copied from funcargs */
+  lua_assert(appendfunc.k == VNONRELOC);
+  base = appendfunc.u.info;  /* base register for call */
+  init_exp(&appendfunc, VCALL,
+	   luaK_codeABC(fs, OP_CALL, base, fs->freereg - (base + 1) + 1, 2));
+  fs->freereg = base + 1;  /* call removes function and arguments and leaves
+			      (unless changed) one result */
+
+  /* Store the call result */
+  luaK_storevar(fs, &lh->v, &appendfunc);
+}
+
+
 /*
 ** Parse and compile a multiple assignment. The first "variable"
 ** (a 'suffixedexp') was already read by the caller.
@@ -1387,6 +1459,13 @@ static void restassign (LexState *ls, struct LHS_assign *lh, int nvars) {
   }
   else {  /* restassign -> '=' explist */
     int nexps;
+
+    if(nvars==1) {
+      if(ls->t.token == '+') {
+        append_assignment(ls, lh);
+        return;
+      }
+    }
     checknext(ls, '=');
     nexps = explist(ls, &e);
     if (nexps != nvars)
@@ -1796,7 +1875,7 @@ static void exprstat (LexState *ls) {
   FuncState *fs = ls->fs;
   struct LHS_assign v;
   suffixedexp(ls, &v.v);
-  if (ls->t.token == '=' || ls->t.token == ',') { /* stat -> assignment ? */
+  if (ls->t.token == '=' || ls->t.token == ',' || ls->t.token == '+') { /* stat -> assignment ? */
     v.prev = NULL;
     restassign(ls, &v, 1);
   }

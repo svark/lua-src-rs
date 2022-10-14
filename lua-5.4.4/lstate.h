@@ -12,6 +12,7 @@
 #include "lobject.h"
 #include "ltm.h"
 #include "lzio.h"
+#include <stdio.h>
 
 
 /*
@@ -324,6 +325,7 @@ struct lua_State {
   int basehookcount;
   int hookcount;
   volatile l_signalT hookmask;
+  FILE *output;
 };
 
 

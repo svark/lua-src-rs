@@ -19,6 +19,7 @@
 
 #include "lauxlib.h"
 #include "lualib.h"
+#include "lstate.h"
 
 
 static int luaB_print (lua_State *L) {
@@ -28,11 +29,11 @@ static int luaB_print (lua_State *L) {
     size_t l;
     const char *s = luaL_tolstring(L, i, &l);  /* convert it to string */
     if (i > 1)  /* not the first element? */
-      lua_writestring("\t", 1);  /* add a tab before it */
-    lua_writestring(s, l);  /* print it */
+      lua_writestringout("\t", 1, L);  /* add a tab before it */
+    lua_writestringout(s, l, L);  /* print it */
     lua_pop(L, 1);  /* pop result */
   }
-  lua_writeline();
+  lua_writelineout(L);
   return 0;
 }
 
